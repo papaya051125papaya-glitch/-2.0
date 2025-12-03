@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>旅遊行程管理器 ✈️ (v8.11 緊湊排版 + 修復底部顯示)</title> 
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        body { 
+            font-family: 'Noto Sans TC', sans-serif; 
+            -webkit-tap-highlight-color: transparent; 
+            background-color: #F0F8FF; 
+            padding-top: 0;
+        }
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .safe-bottom { padding-bottom: calc(80px + env(safe-area-inset-bottom)); }
+        
+        /* --- 恢復滑動隱藏 Header 的 CSS 過渡效果 --- */
+        .header-transition-enter-active, .header-transition-leave-active {
+            transition: transform 0.3s ease-out;
+        }
+        .header-transition-enter-from, .header-transition-leave-to {
+            transform: translateY(-100%); /* 向上滑出視圖 */
+        }
+        .header-transition-enter-to, .header-transition-leave-from {
+            transform: translateY(0);
+        }
+        
+        /* 強化時間軸線條 */
+        .transport-line {
+            position: absolute;
+            left: 56px; 
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background-color: #E0E7FF; 
+            z-index: 1;
+        }
+        @keyframes slide-up {
+            from { transform: translateY(100%); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        .animate-slide-up {
+            animation: slide-up 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .itinerary-card, .transport-card {
+             border-radius: 1.25rem; 
+        }
+        .map-image-container {
+            position: relative;
+            height: 80px; 
+            overflow: hidden;
+            border-radius: 12px;
+            margin-top: 8px;
+        }
+        .map-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.3);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            transition: background 0.2s;
+            border-radius: 12px; 
+        }
+        select.appearance-none {
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%236B7280'%3E%3Cpath fill-rule='evenodd' d='M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z' clip-rule='evenodd' /%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 0.75rem center;
+            background-size: 1.5em 1.5em;
+            padding-right: 2.5rem;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800">
+
+<div id="app" class="max-w-md mx-auto min-h-screen relative bg-gray-50 shadow-2xl flex flex-col">
+    
+    <Transition name="header-transition">
+    <header v-if="showHeader" class="text-white pt-6 pb-12 rounded-b-[3rem] shadow-xl z-30 w-full max-w-md sticky top-0 mx-auto"
+            :style="{ 
+                backgroundImage: 'linear-gradient(to bottom right, ' + gradientStart + ', ' + gradientEnd + ')',
+                boxShadow: '0 10px 15px -3px ' + shadowColorHex 
+            }">
+        <div class="flex items-center mb-2 px-4">
+            <i class="fas fa-chevron-left text-xl mr-2"></i>
+            <input 
+                type="text"
+                v-model="tripName" 
+                @blur="saveTripData"
+                class="flex-1 text-2xl font-bold tracking-wide text-white bg-transparent border-none focus:ring-0 focus:outline-none w-full p-0 text-center"
+                >
+            <i class="fas fa-plane text-xl ml-2"></i>
+        </div>
+        <p class="text-center text-white/80 text-xs mb-3">行程已自動儲存</p>
+        
+        <div class="grid grid-cols-2 gap-2 px-4"> 
+            <div class="bg-white p-3 rounded-xl shadow-sm flex flex-col justify-between text-gray-800">
+                <div class="flex items-center justify-between">
+                    <h4 class="font-bold text-gray-700 text-xs">今日天氣 ({{ weatherData.city }})</h4>
+                    <i :class="weatherData.icon" class="text-lg text-yellow-500"></i>
+                </div>
+                <p class="text-xl font-bold text-gray-900">{{ weatherData.temperature }}°C</p>
+            </div>
+
+            <div class="bg-white p-3 rounded-xl shadow-sm flex flex-col justify-between text-gray-800">
+                <h4 class="font-bold text-gray-700 text-xs">即時匯率 (日幣)</h4>
+                <p class="text-xl font-bold text-gray-900">
+                    {{ exchangeRate.rate }}
+                    <span class="text-sm font-normal">TWD</span>
+                </p>
+            </div>
+        </div>
+        
+    </header>
+    </Transition>
+
+    <main class="flex-1 overflow-visible safe-bottom px-4 pt-4"> 
+        
+        <div v-if="currentTab === 'schedule'" class="space-y-4"> 
+            
+            <div class="flex space-x-3 overflow-x-auto hide-scrollbar pb-2 sticky top-[10px] bg-gray-50 z-20 pt-1 shadow-sm -mx-4 px-4">
+                <button 
+                    v-for="day in days" 
+                    :key="day"
+                    @pointerdown.stop.prevent="currentDay = day"
+                    :class="['flex-shrink-0 px-5 py-2 rounded-full text-sm font-medium transition-all shadow-md', 
+                             currentDay === day ? 'text-white' : 'bg-white text-gray-500 hover:bg-gray-100']"
+                    :style="{ 
+                        backgroundColor: currentDay === day ? primaryColorHex : '',
+                        boxShadow: currentDay === day ? '0 4px 6px -1px ' + shadowColorHex : ''
+                    }">
+                    Day {{ day }}
+                </button>
+                <button @pointerdown.stop.prevent="addDay" class="flex-shrink-0 w-9 h-9 rounded-full bg-gray-200 text-gray-600 flex items-center justify-center">
+                    <i class="fas fa-plus text-xs"></i>
+                </button>
+            </div>
+
+            <div class="space-y-3 relative mt-4">
+                <div v-if="filteredItinerary.length === 0" class="text-center py-10 text-gray-400">
+                    <i class="fas fa-calendar-plus text-4xl mb-3 opacity-50"></i>
+                    <p>這天還沒有行程，按下方按鈕新增</p>
+                </div>
+                
+                <div class="transport-line"></div> 
+                
+                <template v-for="(item, index) in filteredItinerary" :key="item.id">
+                    
+                    <div class="flex relative z-10">
+                        <div class="w-16 flex flex-col items-center flex-shrink-0 pt-0.5">
+                            <span class="text-lg font-bold leading-none text-gray-700">{{ item.time }}</span>
+                            <div class="w-10 h-10 rounded-full flex items-center justify-center bg-white shadow-lg border-2 mt-2" 
+                                 :style="{ borderColor: primaryColorHex, color: primaryColorHex }">
+                                 <i :class="getTransportIcon(item.transport)"></i>
+                            </div>
+                        </div>
+                        
+                        <div class="flex-1 bg-white p-4 itinerary-card shadow-lg border border-gray-100 relative group transition-transform active:scale-[0.99] ml-4 -mt-2">
+                            <div class="flex justify-between items-start">
+                                <div class="flex-1">
+                                    <h3 class="font-bold text-gray-800 text-lg">{{ item.location }}</h3>
+                                    <p class="text-gray-500 text-sm mt-0.5" v-if="item.note">{{ item.note }}</p>
+                                </div>
+                                <div class="flex flex-col gap-1 text-xs text-gray-400 mt-1 ml-3 flex-shrink-0">
+                                    <div class="flex items-center gap-0.5 text-green-500 font-medium whitespace-nowrap">
+                                        <i class="fas fa-camera text-xs"></i> 拍照
+                                    </div>
+                                    <div class="flex items-center gap-0.5 text-red-500 font-medium whitespace-nowrap">
+                                        <i class="fas fa-sticky-note text-xs"></i> 備註
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="flex gap-2 mt-3 pt-3 border-t border-gray-100">
+                                <a :href="getMapLink(item, index, 'location')" target="_blank" class="text-gray-500 text-xs font-medium hover:underline flex items-center">
+                                    <i class="fas fa-location-arrow mr-1"></i> 地點導航
+                                </a>
+                                <button @pointerdown="editItem(item)" class="text-gray-500 text-xs font-medium hover:underline flex items-center">
+                                    <i class="fas fa-edit mr-1"></i> 編輯
+                                </button>
+                                <button @pointerdown="deleteItem(item.id)" class="text-red-500 text-xs font-medium hover:underline flex items-center">
+                                    <i class="fas fa-trash-alt mr-1"></i> 刪除
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div v-if="index < filteredItinerary.length - 1" class="relative z-10">
+                        <div class="flex">
+                            <div class="w-16 flex flex-col items-center flex-shrink-0">
+                                <div class="w-8 h-8 rounded-full flex items-center justify-center bg-white shadow-md border-2" 
+                                     :style="{ borderColor: accentColorHex, color: primaryColorHex }">
+                                    <i :class="getTransportIcon(filteredItinerary[index + 1].transport)"></i>
+                                </div>
+                            </div>
+                            
+                            <div class="flex-1 bg-white p-4 transport-card shadow-md border border-gray-200 relative z-20 ml-4 -mt-2 mb-2">
+                                <div class="flex items-center justify-between mb-2 border-b border-gray-100 pb-2">
+                                    <div class="flex items-center">
+                                        <div class="text-sm font-bold text-gray-700 flex items-center gap-1">
+                                            <i class="fas fa-search text-blue-500"></i>
+                                            {{ item.transport === 'plane' ? '點擊查看航班狀態' : '預計路線 (最快)' }}
+                                        </div>
+                                    </div>
+                                    <a :href="getMapLink(filteredItinerary[index + 1], index + 1, 'route')" target="_blank" class="text-blue-500 font-bold text-sm flex items-center">
+                                        前往 <i class="fas fa-chevron-right ml-0.5 text-xs"></i>
+                                    </a>
+                                </div>
+
+                                <div v-if="item.transport !== 'plane'" class="space-y-1 mt-2">
+                                    <div class="flex justify-between items-center text-sm">
+                                        <p class="font-bold text-gray-800">3 小時 23 分</p>
+                                        <p class="font-bold text-gray-800">334 公里</p>
+                                    </div>
+                                    <p class="text-xs text-gray-500">途經國道3號和國道1號 (模擬)</p>
+                                </div>
+
+                                <a :href="getMapLink(filteredItinerary[index + 1], index + 1, 'route')" target="_blank" class="map-image-container block cursor-pointer mt-3">
+                                    <img :src="getMapLink(filteredItinerary[index + 1], index + 1, 'image')" alt="交通路線圖預覽" class="w-full h-full object-cover">
+                                    <div class="map-overlay rounded-xl">
+                                        <span class="text-sm font-bold">點擊查看 Google 導航</span>
+                                    </div>
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <div v-else-if="currentTab === 'money'" class="space-y-6"> 
+            
+            <div class="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+                <h3 class="font-bold text-gray-800 mb-3 flex items-center gap-2">
+                    <i class="fas fa-users text-blue-500"></i> 同行人管理
+                </h3>
+                <div class="flex gap-2 mb-4">
+                    <input type="text" v-model="newUser" placeholder="輸入新的旅伴名稱" class="flex-1 bg-gray-50 border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:border-blue-500">
+                    <button @pointerdown="addUser" class="bg-green-500 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-green-600">
+                        新增
+                    </button>
+                </div>
+                <div class="flex flex-wrap gap-2 pt-2 border-t border-gray-100">
+                    <div v-for="user in users" :key="user" class="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-xs font-medium flex items-center gap-1">
+                        {{ user }}
+                        <button v-if="users.length > 1" @pointerdown="removeUser(user)" class="text-blue-500 hover:text-red-500 ml-1">
+                            <i class="fas fa-times text-xs"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+                <h3 class="font-bold text-gray-800 mb-3 flex items-center gap-2">
+                    <i class="fas fa-calculator text-blue-500"></i> 結算建議
+                </h3>
+                <div v-if="settlements.length === 0" class="text-gray-400 text-sm">目前沒有需要結算的帳務。</div>
+                <div v-for="(s, index) in settlements" :key="index" class="flex justify-between items-center py-2 border-b border-gray-50 last:border-0">
+                    <div class="flex items-center gap-2">
+                        <span class="font-medium text-gray-700">{{ s.from }}</span>
+                        <i class="fas fa-arrow-right text-gray-300 text-xs"></i>
+                        <span class="font-medium text-gray-700">{{ s.to }}</span>
+                    </div>
+                    <span class="font-bold" :style="{ color: primaryColorHex }">¥{{ Math.round(s.amount).toLocaleString() }}</span>
+                </div>
+            </div>
+            
+            <div>
+                <h3 class="font-bold text-gray-800 mb-3 px-1">最近支出</h3>
+                <div v-if="expenses.length === 0" class="text-center py-4 text-gray-400 text-sm">尚未有支出紀錄</div>
+                <div v-for="exp in expenses" :key="exp.id" class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex justify-between items-center">
+                    <div>
+                        <p class="font-bold text-gray-800">{{ exp.title }}</p>
+                        <p class="text-xs text-gray-400">由 {{ exp.payer }} 支付</p>
+                    </div>
+                    <button @pointerdown="deleteExpense(exp.id)" class="text-xs text-red-400 mt-1">刪除</button>
+                </div>
+            </div>
+        </div>
+        
+        <div v-else-if="currentTab === 'settings'" class="space-y-6"> 
+            
+            <h2 class="text-2xl font-bold text-gray-800 mb-4">App 設定與工具</h2>
+
+            <div class="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+                <h3 class="font-bold text-gray-800 mb-3 flex items-center gap-2" :style="{ color: primaryColorHex }">
+                    <i class="fas fa-suitcase-rolling"></i> 行李清單 ({{ packingProgress }}%)
+                </h3>
+                <div class="w-full bg-gray-200 rounded-full h-2.5 mb-4">
+                    <div class="h-2.5 rounded-full transition-all duration-500" 
+                             :style="{ width: packingProgress + '%', backgroundColor: primaryColorHex }"></div>
+                </div>
+
+                <div class="flex gap-2 mb-4">
+                    <input type="text" v-model="newBagItem" placeholder="新增行李項目" class="flex-1 bg-gray-50 border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:border-blue-500">
+                    <button @pointerdown="addBagItem" class="bg-green-500 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-green-600">
+                        新增
+                    </button>
+                </div>
+            </div>
+            
+            <div class="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+                <h3 class="font-bold text-gray-800 mb-3 flex items-center gap-2" :style="{ color: primaryColorHex }">
+                    <i class="fas fa-camera"></i> 景點拍照記錄與技巧
+                </h3>
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 mb-1">拍照 Tips 筆記</label>
+                    <textarea v-model="photoTips" @blur="saveTripData" placeholder="例如：在東京鐵塔下午五點的光線最好" rows="4" class="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:border-blue-500 focus:bg-white transition-colors"></textarea>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+                <h3 class="font-bold text-gray-800 mb-3 flex items-center gap-2" :style="{ color: primaryColorHex }">
+                    <i class="fas fa-palette"></i> 主題顏色
+                </h3>
+                <div class="flex flex-wrap gap-3">
+                    <div v-for="theme in availableThemes" :key="theme.key" class="text-center">
+                        <button 
+                            @pointerdown="themeColor = theme.key"
+                            :class="['w-10 h-10 rounded-full shadow-md transition-all border-2 flex items-center justify-center', 
+                                     themeColor === theme.key ? 'scale-110 ring-2 ring-offset-2' : 'border-gray-200']"
+                            :style="{ backgroundColor: theme.hex, borderColor: theme.hex, ringColor: theme.hex }">
+                            <i v-if="themeColor === theme.key" class="fas fa-check text-white text-sm"></i>
+                        </button>
+                        <p class="text-xs text-gray-500 mt-1">{{ theme.label }}</p>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </main>
+
+    <button v-if="currentTab !== 'settings'" @pointerdown="openModal()" class="fixed bottom-24 right-5 w-14 h-14 text-white rounded-full shadow-xl flex items-center justify-center transform hover:scale-110 transition-transform z-40" 
+            :style="{ 
+                backgroundColor: primaryColorHex,
+                boxShadow: '0 10px 15px -3px ' + shadowColorHex + ', 0 4px 6px -4px ' + shadowColorHex 
+            }">
+        <i class="fas fa-plus text-xl"></i>
+    </button>
+    
+    <nav class="fixed bottom-0 max-w-md w-full bg-white border-t border-gray-100 flex justify-around items-center py-3 pb-6 z-30 text-xs font-medium text-gray-400 shadow-[0_-5px_20px_rgba(0,0,0,0.05)]">
+        <button @pointerdown="currentTab = 'schedule'" :class="['flex flex-col items-center gap-1 transition-colors', currentTab === 'schedule' ? 'text-blue-600' : 'hover:text-gray-600']" :style="{ color: currentTab === 'schedule' ? primaryColorHex : '' }">
+            <i class="fas fa-map-marked-alt text-xl mb-0.5"></i>
+            <span>行程</span>
+        </button>
+        <button @pointerdown="currentTab = 'money'" :class="['flex flex-col items-center gap-1 transition-colors', currentTab === 'money' ? 'text-blue-600' : 'hover:text-gray-600']" :style="{ color: currentTab === 'money' ? primaryColorHex : '' }">
+            <i class="fas fa-wallet text-xl mb-0.5"></i>
+            <span>分帳</span>
+        </button>
+        <button @pointerdown="currentTab = 'settings'" :class="['flex flex-col items-center gap-1 transition-colors', currentTab === 'settings' ? 'text-blue-600' : 'hover:text-gray-600']" :style="{ color: currentTab === 'settings' ? primaryColorHex : '' }">
+            <i class="fas fa-cog text-xl mb-0.5"></i>
+            <span>工具</span>
+        </button>
+    </nav>
+
+    <div v-if="showModal" class="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-4" @click.self="closeModal"> 
+        <div class="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl animate-slide-up modal-input-fix">
+            
+            <h3 class="text-xl font-bold mb-4">
+                {{ modalTitle }}
+            </h3>
+
+            <div v-if="currentTab === 'schedule'" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 mb-1">時間</label>
+                    <input type="time" v-model="newItem.time" @pointerdown.stop class="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 focus:outline-none focus:border-blue-500 focus:bg-white transition-colors">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 mb-1">地點 / 活動</label>
+                    <input type="text" v-model="newItem.location" @pointerdown.stop placeholder="例如：淺草寺雷門" class="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 focus:outline-none focus:border-blue-500 focus:bg-white transition-colors">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 mb-1">離開此處，預計搭乘交通</label>
+                    <select v-model="newItem.transport" @pointerdown.stop class="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 focus:outline-none focus:border-blue-500 focus:bg-white transition-colors appearance-none">
+                        <option v-for="option in transportOptions" :key="option.key" :value="option.key">
+                            {{ option.label }}
+                        </option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 mb-1">備註行程 (選填)</label>
+                    <input type="text" v-model="newItem.note" @pointerdown.stop placeholder="例如：要穿和服" class="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 focus:outline-none focus:border-blue-500 focus:bg-white transition-colors">
+                </div>
+            </div>
+
+            <div v-else class="space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 mb-1">項目名稱</label>
+                    <input type="text" v-model="newExpense.title" @pointerdown.stop placeholder="例如：晚餐壽司" class="w-full bg-gray-50 border border-gray-200 rounded-xl p-3">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 mb-1">金額 (JPY)</label>
+                    <input type="number" v-model="newExpense.amount" @pointerdown.stop placeholder="2000" class="w-full bg-gray-50 border border-gray-200 rounded-xl p-3">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 mb-1">誰付錢？</label>
+                    <div class="flex gap-2 flex-wrap">
+                        <button v-for="user in users" :key="user" 
+                            @pointerdown="newExpense.payer = user"
+                            :class="['px-3 py-1.5 rounded-lg text-sm border transition-colors shadow-sm', newExpense.payer === user ? 'text-white border-none' : 'bg-white text-gray-600 border-gray-200']"
+                            :style="{ backgroundColor: newExpense.payer === user ? primaryColorHex : '' }">
+                            {{ user }}
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <button @pointerdown="confirmSave" class="w-full text-white font-bold py-3.5 rounded-xl mt-6 shadow-lg active:scale-95 transition-transform" 
+                        :style="{ 
+                            backgroundColor: primaryColorHex,
+                            boxBoxShadow: '0 4px 6px -1px ' + shadowColorHex + ', 0 2px 4px -2px ' + shadowColorHex 
+                        }">
+                {{ currentTab === 'schedule' ? (editingItem ? '儲存變更' : '確認新增') : '確認新增' }}
+            </button>
+        </div>
+    </div>
+
+</div>
+
+<script>
+    const { createApp, ref, computed, watch, onMounted, onUnmounted } = Vue; 
+    
+    // 核心優化：Throttle (節流) 函數
+    function throttle(func, limit) {
+        let inThrottle;
+        return function() {
+            const args = arguments;
+            const context = this;
+            if (!inThrottle) {
+                func.apply(context, args);
+                inThrottle = true;
+                setTimeout(() => inThrottle = false, limit);
+            }
+        }
+    }
+    // 核心優化：Debounce (防抖動) 函數
+    function debounce(func, delay) {
+        let timeout;
+        return function(...args) {
+            clearTimeout(timeout);
+            timeout = setTimeout(() => func.apply(this, args), delay);
+        };
+    }
+
+    const createDefaultTripData = (name = '東京旅行團') => ({
+        name: name,
+        themeColor: 'orange', 
+        users: ['我', '旅伴 A'],
+        days: [1, 2, 3, 4], 
+        currentDay: 1,
+        itinerary: [
+            { id: Date.now() + 1, day: 1, time: '10:00', location: '桃園機場', note: '航班編號', transport: 'plane' },
+            { id: Date.now() + 2, day: 1, time: '20:38', location: '羽田機場', note: '', transport: 'subway' },
+            { id: Date.now() + 3, day: 1, time: '21:16', location: '東京鐵塔', note: '', transport: 'walk' },
+        ],
+        expenses: [],
+        packingList: [ 
+            { id: 1, name: '護照與機票', checked: false },
+            { id: 2, name: '日幣現金', checked: false },
+            { id: 3, name: '手機充電線', checked: false },
+        ],
+        photoTips: '拍照時記得尋找日式燈籠作為前景！', 
+        currentTab: 'schedule'
+    });
+
+    const app = createApp({
+        setup() {
+            const STORAGE_KEY = 'trip_manager_v7_final';
+            const tripData = ref({}); 
+            const editingItem = ref(null); 
+            
+            // --- Header 滾動邏輯狀態 ---
+            const showHeader = ref(true);
+            let lastScrollY = 0;
+            const HIDE_THRESHOLD = 50; // 滾動超過 50px 才開始觸發隱藏
+            const SHOW_AREA_HEIGHT = 50; // 滾動到頂部 50px 範圍內都顯示
+
+            // --- 主題顏色定義 (不變) ---
+            const themeColors = {
+                blue: { hex: '#2563EB', accent: '#3B82F6', shadow: 'rgba(37, 99, 235, 0.4)', gradientStart: '#2563EB', gradientEnd: '#3B82F6', label: '經典藍' },
+                red: { hex: '#DC2626', accent: '#EF4444', shadow: 'rgba(220, 38, 38, 0.4)', gradientStart: '#DC2626', gradientEnd: '#EF4444', label: '熱情紅' },
+                green: { hex: '#16A34A', accent: '#22C55E', shadow: 'rgba(22, 163, 74, 0.4)', gradientStart: '#16A34A', gradientEnd: '#22C55E', label: '清新綠' },
+                purple: { hex: '#9333EA', accent: '#A855F7', shadow: 'rgba(147, 51, 234, 0.4)', gradientStart: '#9333EA', gradientEnd: '#A855F7', label: '夢幻紫' },
+                orange: { hex: '#F97316', accent: '#FA8C3E', shadow: 'rgba(249, 115, 22, 0.4)', gradientStart: '#FA8C3E', gradientEnd: '#F97316', label: '活力橙' },
+                teal: { hex: '#2FCB78', accent: '#4ADAD7', shadow: 'rgba(0, 184, 148, 0.4)', gradientStart: '#4ADAD7', gradientEnd: '#2FCB78', label: '青蘋綠' },
+                sapphire: { hex: '#0A6CFF', accent: '#3C93FF', shadow: 'rgba(10, 108, 255, 0.4)', gradientStart: '#3C93FF', gradientEnd: '#0A6CFF', label: '寶石藍' } 
+            };
+            const availableThemes = computed(() => Object.keys(themeColors).map(key => ({ key, ...themeColors[key] })));
+
+            // 交通工具選項 (無變動)
+            const transportOptions = ref([
+                { key: 'walk', icon: 'fas fa-walking', label: '步行' },
+                { key: 'subway', icon: 'fas fa-subway', label: '地鐵/電車' },
+                { key: 'bus', icon: 'fas fa-bus', label: '公車' },
+                { key: 'taxi', icon: 'fas fa-taxi', label: '計程車' },
+                { key: 'shinkansen', icon: 'fas fa-shuttle-van', label: '新幹線/高鐵' },
+                { key: 'car', icon: 'fas fa-car', label: '開車/汽車' },
+                { key: 'motorcycle', icon: 'fas fa-motorcycle', label: '摩托車' },
+                { key: 'bicycle', icon: 'fas fa-bicycle', label: '腳踏車' },
+                { key: 'plane', icon: 'fas fa-plane', label: '飛機' }
+            ]);
+            
+            // 天氣資料 & 匯率資料 (模擬)
+            const weatherData = ref({ city: '東京', temperature: 18, description: '今日天氣', icon: 'fas fa-cloud-sun' });
+            const exchangeRate = ref({ currency: 'JPY', rate: 0.2158, lastUpdated: '即時匯率' });
+
+            // --- Computed 屬性 (不變) ---
+            const tripName = computed({ get() { return tripData.value.name || ''; }, set(val) { tripData.value.name = val; } });
+            const themeColor = computed({ get() { return tripData.value.themeColor || 'orange'; }, set(val) { tripData.value.themeColor = val; } });
+            const currentTab = computed({ get() { return tripData.value.currentTab || 'schedule'; }, set(val) { tripData.value.currentTab = val; } });
+            const currentDay = computed({ get() { return tripData.value.currentDay || 1; }, set(val) { tripData.value.currentDay = val; } });
+            const photoTips = computed({ get() { return tripData.value.photoTips || ''; }, set(val) { tripData.value.photoTips = val; } });
+            const users = computed(() => tripData.value.users || []);
+            const days = computed(() => tripData.value.days || []); 
+            const itinerary = computed(() => tripData.value.itinerary || []);
+            const expenses = computed(() => tripData.value.expenses || []);
+            const packingList = computed({ get() { return tripData.value.packingList || []; }, set(val) { tripData.value.packingList = val; } });
+            
+            const primaryColorHex = computed(() => themeColors[themeColor.value]?.hex || '#F97316');
+            const accentColorHex = computed(() => themeColors[themeColor.value]?.accent || '#FA8C3E');
+            const shadowColorHex = computed(() => themeColors[themeColor.value]?.shadow || 'rgba(249, 115, 22, 0.4)');
+            const gradientStart = computed(() => themeColors[themeColor.value]?.gradientStart || '#FA8C3E');
+            const gradientEnd = computed(() => themeColors[themeColor.value]?.gradientEnd || '#F97316');
+            
+            // 表單暫存
+            const newUser = ref(''); 
+            const newBagItem = ref(''); 
+            const showModal = ref(false);
+            const newItem = ref({ time: '', location: '', note: '', transport: 'subway' });
+            const newExpense = ref({ title: '', amount: '', payer: '' });
+
+            const modalTitle = computed(() => currentTab.value === 'schedule' ? (editingItem.value ? '編輯行程' : '新增行程') : '新增支出');
+            
+            // --- 核心資料管理 Methods ---
+            const saveTripData = () => { localStorage.setItem(STORAGE_KEY, JSON.stringify(tripData.value)); };
+            const debouncedSaveTripData = debounce(saveTripData, 700); 
+
+            const loadData = () => {
+                const saved = localStorage.getItem(STORAGE_KEY);
+                if (saved) {
+                    const loadedData = JSON.parse(saved);
+                    if (!loadedData.itinerary || !Array.isArray(loadedData.itinerary)) {
+                        loadedData.itinerary = [];
+                    }
+                    loadedData.itinerary = loadedData.itinerary.map(item => ({
+                        ...item,
+                        transport: item.transport || 'subway' 
+                    }));
+                    if (!loadedData.themeColor) loadedData.themeColor = 'orange'; 
+                    tripData.value = loadedData;
+                } else {
+                    tripData.value = createDefaultTripData();
+                }
+                newExpense.value.payer = tripData.value.users[0] || '';
+            };
+
+
+            watch(tripData, () => { debouncedSaveTripData(); }, { deep: true });
+            
+            const filteredItinerary = computed(() => {
+                return itinerary.value
+                    .filter(item => item.day === currentDay.value)
+                    .sort((a, b) => a.time.localeCompare(b.time));
+            });
+            
+            // 結算邏輯 (保持不變)
+            const settlements = computed(() => {
+                let balances = {};
+                users.value.forEach(u => balances[u] = 0);
+                if(users.value.length === 0 || expenses.value.length === 0) return [];
+
+                expenses.value.forEach(exp => {
+                    const splitAmount = Number(exp.amount) / users.value.length;
+                    balances[exp.payer] = (balances[exp.payer] || 0) + Number(exp.amount);
+                    users.value.forEach(u => balances[u] = (balances[u] || 0) - splitAmount);
+                });
+
+                let result = [];
+                let debtors = [];
+                let creditors = [];
+
+                for (let u in balances) {
+                    if (balances[u] < -1) debtors.push({ user: u, amount: Math.abs(balances[u]) });
+                    if (balances[u] > 1) creditors.push({ user: u, amount: balances[u] });
+                }
+
+                let i = 0, j = 0;
+                while (i < debtors.length && j < creditors.length) {
+                    let amount = Math.min(debtors[i].amount, creditors[j].amount);
+                    if (amount > 0) {
+                        result.push({ from: debtors[i].user, to: creditors[j].user, amount: amount });
+                    }
+                    debtors[i].amount -= amount;
+                    creditors[j].amount -= amount;
+                    if (debtors[i].amount < 1) i++;
+                    if (creditors[j].amount < 1) j++;
+                }
+                return result;
+            });
+
+            // 核心修正：滾動事件處理函數，修復頂部/底部顯示問題
+            const handleScroll = throttle(() => {
+                // 僅在 'schedule' tab 時啟用滑動隱藏
+                if (currentTab.value !== 'schedule') return;
+                
+                const currentScrollY = window.scrollY;
+                const windowHeight = window.innerHeight;
+                const bodyHeight = document.body.offsetHeight;
+                
+                // 1. 滾動到頂部區域 (< 50px)，Header 必須顯示
+                if (currentScrollY < SHOW_AREA_HEIGHT) {
+                    showHeader.value = true;
+                } 
+                
+                // 2. 滾動到底部 (視窗底部觸及文件底部，通常為最後的 1px 誤差)
+                else if (currentScrollY + windowHeight >= bodyHeight - 1) { 
+                    showHeader.value = true;
+                }
+
+                // 3. 向下滾動超過 50px，且未在底部，Header 隱藏
+                else if (currentScrollY > HIDE_THRESHOLD) {
+                    showHeader.value = false;
+                }
+                
+                lastScrollY = currentScrollY;
+            }, 100); 
+
+            // 註冊/解除滾動監聽器
+            onMounted(() => {
+                loadData();
+                window.addEventListener('scroll', handleScroll);
+            });
+
+            onUnmounted(() => {
+                window.removeEventListener('scroll', handleScroll);
+            });
+            
+            // 剩下的 CRUD/工具函數保持不變
+            
+            const addDay = () => {
+                const currentDays = tripData.value.days;
+                const nextDay = (currentDays.length > 0 ? Math.max(...currentDays) : 0) + 1;
+                tripData.value.days = [...currentDays, nextDay]; 
+                currentDay.value = nextDay; 
+            };
+            
+            const addUser = () => {
+                const name = newUser.value.trim();
+                if (!name || users.value.includes(name)) return;
+                tripData.value.users = [...users.value, name];
+                newUser.value = '';
+            };
+            
+            const removeUser = (userToRemove) => {
+                if (tripData.value.users.length <= 1) return alert('必須保留至少一位同行人！');
+                if (tripData.value.expenses.some(e => e.payer === userToRemove)) {
+                    if (!confirm(`【${userToRemove}】仍有支出紀錄。刪除該旅伴將會同時刪除所有由他墊付的支出。確定要刪除嗎？`)) {
+                        return;
+                    }
+                    tripData.value.expenses = tripData.value.expenses.filter(e => e.payer !== userToRemove);
+                }
+                tripData.value.users = tripData.value.users.filter(u => u !== userToRemove);
+                if (!tripData.value.users.includes(newExpense.value.payer)) {
+                    newExpense.value.payer = tripData.value.users[0];
+                }
+            };
+
+            const packingProgress = computed(() => {
+                const total = packingList.value.length;
+                if (total === 0) return 0;
+                const checked = packingList.value.filter(item => item.checked).length;
+                return Math.round((checked / total) * 100);
+            });
+
+            const addBagItem = () => {
+                const name = newBagItem.value.trim();
+                if (!name) return;
+                tripData.value.packingList = [...packingList.value, { id: Date.now(), name: name, checked: false }];
+                newBagItem.value = '';
+            };
+
+            const getTransportIcon = (key) => {
+                return transportOptions.value.find(o => o.key === key)?.icon || 'fas fa-map-pin';
+            };
+
+
+            const getMapLink = (item, index, type) => {
+                const dayItinerary = filteredItinerary.value;
+                const location = item.location;
+                const transportKey = item.transport;
+
+                // --- Flight specific logic ---
+                if (transportKey === 'plane') {
+                    const flightSearchQuery = encodeURIComponent(`航班狀態 ${location}`);
+                    if (type === 'route' || type === 'location') {
+                        return `https://www.google.com/search?q=${flightSearchQuery}&hl=zh-TW`;
+                    }
+                    if (type === 'image') {
+                        return `https://picsum.photos/400/120?random=flight_${index}_${currentDay.value}`; 
+                    }
+                }
+                
+                let travelModeCode = '0'; // Default to Driving (0)
+
+                switch(transportKey) {
+                    case 'walk':
+                        travelModeCode = '2'; 
+                        break;
+                    case 'subway':
+                    case 'bus':
+                        travelModeCode = '3'; 
+                        break;
+                    case 'bicycle':
+                        travelModeCode = '1'; 
+                        break;
+                    case 'taxi':
+                    case 'shinkansen':
+                    case 'car':
+                    case 'motorcycle': 
+                    default:
+                        travelModeCode = '0'; 
+                }
+
+                if (type === 'location') {
+                    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}`;
+                }
+
+                if (type === 'route') {
+                    const originItem = dayItinerary[index - 1];
+                    const originLocation = originItem ? originItem.location : '';
+                    
+                    if (!originLocation) {
+                        return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}`;
+                    }
+                    
+                    return `https://www.google.com/maps/dir/${encodeURIComponent(originLocation)}/${encodeURIComponent(location)}/data=!4m2!4m1!3e${travelModeCode}`;
+                }
+
+                if (type === 'image') {
+                    const imageUrl = `https://picsum.photos/400/120?random=map_${index}_${currentDay.value}`; 
+                    return imageUrl;
+                }
+                
+                return '#';
+            };
+
+
+            const closeModal = () => {
+                showModal.value = false;
+                editingItem.value = null; 
+                document.body.style.overflow = '';
+            };
+            
+            const openModal = (itemToEdit = null) => {
+                if (itemToEdit && currentTab.value === 'schedule') {
+                    editingItem.value = itemToEdit;
+                    newItem.value = JSON.parse(JSON.stringify(itemToEdit)); 
+                } else {
+                    editingItem.value = null;
+                    const now = new Date();
+                    const timeString = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+                    newItem.value = { time: timeString, location: '', note: '', transport: 'subway' };
+                    newExpense.value = { title: '', amount: '', payer: users.value[0] || '' };
+                }
+                document.body.style.overflow = 'hidden'; 
+                showModal.value = true;
+            };
+            
+            const editItem = (item) => { openModal(item); };
+
+            const deleteItem = (id) => {
+                if (!confirm('確定要刪除此行程嗎？')) return;
+                tripData.value.itinerary = tripData.value.itinerary.filter(i => i.id !== id);
+            };
+
+            const confirmSave = () => {
+                if (currentTab.value === 'schedule') {
+                    if (!newItem.value.location) return alert('請輸入地點');
+
+                    if (editingItem.value) {
+                        const index = tripData.value.itinerary.findIndex(i => i.id === editingItem.value.id);
+                        if (index !== -1) {
+                            tripData.value.itinerary[index] = { ...tripData.value.itinerary[index], ...newItem.value };
+                        }
+                    } else {
+                        const newId = Date.now();
+                        tripData.value.itinerary = [...itinerary.value, { ...newItem.value, id: newId, day: currentDay.value }];
+                    }
+                } else {
+                    if (!newExpense.value.title || !newExpense.value.amount || !newExpense.value.payer) return alert('請完整填寫支出資訊');
+                    if (Number(newExpense.value.amount) <= 0) return alert('金額必須大於零');
+
+                    tripData.value.expenses = [...expenses.value, { 
+                        ...newExpense.value, 
+                        id: Date.now(), 
+                        amount: Number(newExpense.value.amount) 
+                    }];
+                }
+                closeModal();
+            };
+            
+            const deleteExpense = (id) => {
+                if (!confirm('確定要刪除此筆支出嗎？')) return;
+                tripData.value.expenses = expenses.value.filter(e => e.id !== id);
+            };
+
+
+            return {
+                // 資料 (Data)
+                tripName, themeColor, currentDay, currentTab, photoTips, newUser, newBagItem, showModal, newItem, newExpense, editingItem,
+                showHeader, // Header 顯示狀態
+
+                // Computed 屬性
+                primaryColorHex, accentColorHex, shadowColorHex, gradientStart, gradientEnd, availableThemes, transportOptions,
+                weatherData, exchangeRate, filteredItinerary, users, days, settlements, expenses, packingList, packingProgress, modalTitle,
+                
+                // Methods
+                saveTripData, addDay, addUser, deleteItem, confirmSave, deleteExpense,
+                getTransportIcon, getMapLink, editItem, closeModal, openModal
+            };
+        }
+    });
+
+    app.mount('#app');
+</script>
+</body>
+</html>
